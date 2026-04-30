@@ -1,0 +1,77 @@
+version: "3.8"
+
+services:
+
+  redis:
+    image: redis:7-alpine
+    container_name: redis_cache
+    command: >
+      redis-server
+      --maxmemory ${REDIS_MAXMEMORY:-50mb}
+      --maxmemory-policy ${REDIS_POLICY:-allkeys-lru}
+      --save ""
+    ports:
+      - "6379:6379"
+    networks:
+      - red_sistema
+
+  metricas:
+    build: ./metricas
+    container_name: metricas_servicio
+    ports:
+      - "8001:8001"
+    networks:
+      - red_sistema
+    depends_on:
+      - redis
+
+  generador_respuestas:
+    build:
+      context: ./generador_respuestas
+      dockerfile: Dockerfile
+    container_name: generador_respuestas_servicio
+    environment:
+      - METRICAS_URL=http://metricas:8001
+    volumes:
+      - ./datos:/datos
+    networks:
+      - red_sistema
+    depends_on:
+      - metricas
+    ports:
+      - "8002:8002"
+
+  cache_service:
+    build: ./cache_service
+    container_name: cache_servicio
+    environment:
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - RESPUESTAS_URL=http://generador_respuestas:8002
+      - METRICAS_URL=http://metricas:8001
+      - CACHE_TTL=${CACHE_TTL:-120}
+    networks:
+      - red_sistema
+    depends_on:
+      - redis
+      - generador_respuestas
+    ports:
+      - "8003:8003"
+
+  generador_trafico:
+    build: ./generador_trafico
+    container_name: generador_trafico_servicio
+    environment:
+      - CACHE_URL=http://cache_service:8003
+      - METRICAS_URL=http://metricas:8001
+      - DISTRIBUCION=${DISTRIBUCION:-zipf}
+      - TOTAL_CONSULTAS=${TOTAL_CONSULTAS:-500}
+      - CONSULTAS_POR_SEGUNDO=${CONSULTAS_POR_SEGUNDO:-10}
+    networks:
+      - red_sistema
+    depends_on:
+      - cache_service
+
+networks:
+  red_sistema:
+    driver: bridge
